@@ -1,0 +1,100 @@
+#!/bin/sh
+
+# placeholders for the respective IPs and interfaces
+CLIENT_IP="192.168.0.10"
+CLIENT_INTERFACE="192.168.0.100"
+GATEWAY_IP="10.0.2.4"
+SERVER_IP="10.0.0.10"
+SERVER_INTERFACE="10.0.0.100"
+# to call $GATEWAY_IP
+
+# setup routing on enp0s9
+sudo iptables -t nat -A POSTROUTING -o enp0s9 -j MASQUERADE
+
+# Default all policies to DROP
+ sudo iptables -P INPUT DROP
+sudo iptables -P OUTPUT DROP
+sudo iptables -P FORWARD DROP
+
+###############################################################
+
+### INPUT CHAIN ###
+
+sudo iptables -A INPUT -s $SERVER_IP -d $SERVER_INTERFACE -p icmp --icmp-type 8 -j ACCEPT
+sudo iptables -A INPUT -s $SERVER_IP -d $CLIENT_IP -p icmp --icmp-type 8 -j ACCEPT
+sudo iptables -A INPUT -s $CLIENT_IP -d $CLIENT_INTERFACE -p icmp --icmp-type 8 -j ACCEPT
+
+### OUTPUT CHAIN ###
+
+sudo iptables -A OUTPUT -s $SERVER_IP -d $CLIENT_IP -p icmp --icmp-type 8 -j ACCEPT
+sudo iptables -A OUTPUT -s $CLIENT_INTERFACE -d $CLIENT_IP -p icmp --icmp-type 8 -j ACCEPT
+sudo iptables -A OUTPUT -s $SERVER_INTERFACE -d $SERVER_IP -p icmp --icmp-type 8 -j ACCEPT
+# Allows the Server VM to ping the gateway Server side interface IP $SERVER_INTERFACE
+sudo iptables -A OUTPUT -d $SERVER_IP -s $SERVER_INTERFACE -j ACCEPT
+# Allows the client VM to ping the gateway Client side interface $CLIENT_INTERFACE
+sudo iptables -A OUTPUT -d $CLIENT_IP -s $CLIENT_INTERFACE -j ACCEPT
+
+### FORWARD CHAIN ###
+
+# Allows the Server VM to ping the Client, can also use -d
+sudo iptables -A FORWARD -d $CLIENT_IP -j ACCEPT
+sudo iptables -A FORWARD -s $CLIENT_IP -j ACCEPT
+#allow icmp packet forwarding for pings
+sudo iptables -A FORWARD -s $SERVER_IP -d $CLIENT_IP -p icmp --icmp-type 0 -j ACCEPT
+sudo iptables -A FORWARD -s $CLIENT_INTERFACE -d $CLIENT_IP -p icmp --icmp-type 8 -j ACCEPT
+#Forwarding http port
+sudo iptables -I FORWARD -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 80 -j ACCEPT
+sudo iptables -I FORWARD -s $CLIENT_IP -d $SERVER_IP -p tcp --dport 80 -j ACCEPT
+# adjust the range to 30000:30099 for ftp passive mode
+sudo iptables -I FORWARD -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 30000:30099 -j ACCEPT
+sudo iptables -I FORWARD -s $CLIENT_IP -d $SERVER_IP -p tcp --dport 30000:30099 -j ACCEPT
+#Forwarding SSH port
+sudo iptables -I FORWARD -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 22 -j ACCEPT
+sudo iptables -I FORWARD -s $CLIENT_IP -d $SERVER_IP -p tcp --dport 22 -j ACCEPT
+#Forwarding FTP port
+sudo iptables -I FORWARD -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 21 -j ACCEPT
+sudo iptables -I FORWARD -s $CLIENT_IP -d $SERVER_IP -p tcp --dport 21 -j ACCEPT
+#Forwarding Domain port
+sudo iptables -I FORWARD -s $SERVER_IP -d $CLIENT_IP -p udp --sport 53 -j ACCEPT
+sudo iptables -I FORWARD -s $CLIENT_IP -d $SERVER_IP -p udp --dport 53 -j ACCEPT
+
+################################################################
+
+
+################################################################
+
+### PRETROUTING ###
+
+#on ports 80, 53, 22, 21 source Client and destination Client interface translate the source ip to the Server
+#http port
+sudo iptables -t nat -A PREROUTING -s $CLIENT_IP -d $CLIENT_INTERFACE -p tcp --dport 80 -j DNAT --to-destination $SERVER_IP
+#SSH port
+sudo iptables -t nat -A PREROUTING -s $CLIENT_IP -d $CLIENT_INTERFACE -p tcp --dport 22 -j DNAT --to-destination $SERVER_IP
+#FTP port
+sudo iptables -t nat -A PREROUTING -s $CLIENT_IP -d $CLIENT_INTERFACE -p tcp --dport 21 -j DNAT --to-destination $SERVER_IP
+#domain port
+sudo iptables -t nat -A PREROUTING -s $CLIENT_IP -d $CLIENT_INTERFACE -p udp --dport 53 -j DNAT --to-destination $SERVER_IP
+# adjust the range to 30000:30099, passive ftp port range
+sudo iptables -t nat -A PREROUTING -s $CLIENT_IP -d $CLIENT_INTERFACE -p tcp --dport 30000:30099 -j DNAT --to-destination $SERVER_IP
+
+### POSTROUTING ###
+
+#on ports 80, 53, 22, 21 source Server and destination Client translate the destination ip to the Client Interface
+#http port
+sudo iptables -t nat -A POSTROUTING -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 80 -j SNAT --to-source $CLIENT_INTERFACE
+#SSH port
+sudo iptables -t nat -A POSTROUTING -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 22 -j SNAT --to-source $CLIENT_INTERFACE
+#allow icmp
+sudo iptables -t nat -A POSTROUTING -s $SERVER_IP -d $CLIENT_IP -p icmp -j SNAT --to-source $CLIENT_INTERFACE
+#domain port
+sudo iptables -t nat -A POSTROUTING -s $SERVER_IP -d $CLIENT_IP -p udp --sport 53 -j SNAT --to-source $CLIENT_INTERFACE
+# adjust the range to 30000:30099
+sudo iptables -t nat -A POSTROUTING -s $SERVER_IP -d $CLIENT_IP -p udp --sport 30000:30099 -j SNAT --to-source $CLIENT_INTERFACE
+#FTP port
+sudo iptables -t nat -A POSTROUTING -s $SERVER_IP -d $CLIENT_IP -p tcp --sport 21 -j SNAT --to-source $CLIENT_INTERFACE
+
+################################################################
+
+
+#sudo iptables -L -t nat
+#sudo iptables -L
